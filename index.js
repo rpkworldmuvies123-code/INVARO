@@ -1,22 +1,14 @@
 require('dotenv').config();
 
-const {
-  Telegraf,
-  Markup,
-  session
-} = require('telegraf');
-
+const { Telegraf, Markup, session } = require('telegraf');
 const express = require('express');
 const db = require('./db');
 
 const TOKEN = process.env.BOT_TOKEN;
-const ADMIN_ID = String(
-  process.env.ADMIN_ID || '7569969750'
-);
-const PORT = Number(
-  process.env.PORT || 10000
-);
+const ADMIN_ID = String(process.env.ADMIN_ID || '7569969750');
+const PORT = Number(process.env.PORT || 10000);
 
+// Minimum trade = 20 USDT
 const MIN_USDT = 20;
 
 if (!TOKEN) {
@@ -24,167 +16,113 @@ if (!TOKEN) {
 }
 
 const bot = new Telegraf(TOKEN);
-
 bot.use(session());
 
-/* ================= SERVER ================= */
+/* ================= HEALTH SERVER ================= */
 
 const app = express();
 
-app.get('/', (_, res) => {
+app.get('/', (_req, res) => {
   res.send('INVARO EXCHANGE BOT ONLINE');
 });
 
-app.get('/health', (_, res) => {
-  res.json({
-    ok: true
-  });
+app.get('/health', (_req, res) => {
+  res.json({ ok: true });
 });
 
-app.listen(
-  PORT,
-  '0.0.0.0',
-  () => {
-    console.log(
-      `Health server on ${PORT}`
-    );
-  }
-);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Health server running on port ${PORT}`);
+});
 
 /* ================= HELPERS ================= */
 
-const admin = ctx =>
+const isAdmin = ctx =>
   String(ctx.from?.id || '') === ADMIN_ID;
 
-const n = x =>
-  Number.isFinite(Number(x))
-    ? Number(x)
-    : 0;
+const num = value => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+};
 
-const money = x =>
-  n(x).toLocaleString(
-    'en-IN',
-    {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    }
-  );
+const money = value =>
+  num(value).toLocaleString('en-IN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
 
-const net = x => ({
+const networkName = value => ({
   ERC20: 'ERC20 / Ethereum',
   BEP20: 'BEP20 / BSC',
   TRC20: 'TRC20 / Tron'
-}[x] || x || '-');
+}[value] || value || '-');
 
-const pay = x => ({
+const paymentName = value => ({
   UPI: 'UPI',
   IMPS: 'Bank / IMPS'
-}[x] || x || '-');
+}[value] || value || '-');
 
-const arg = (
-  ctx,
-  cmd
-) =>
-  (ctx.message.text || '')
+const commandArg = (ctx, command) => {
+  const text = ctx.message?.text || '';
+
+  return text
     .replace(
-      new RegExp(
-        `^\\/${cmd}\\s*`,
-        'i'
-      ),
+      new RegExp(`^\\/${command}(?:@\\w+)?\\s*`, 'i'),
       ''
     )
     .trim();
+};
 
-const reply = (
-  ctx,
-  text,
-  extra = {}
-) =>
-  ctx.reply(
-    text,
-    extra
-  ).catch(e => {
-    console.error(
-      'reply',
-      e.message
-    );
+const send = (ctx, text, extra = {}) =>
+  ctx.reply(text, extra).catch(err => {
+    console.error('Telegram reply error:', err.message);
   });
 
-/* ================= KEYBOARDS ================= */
-
-const mainKb = () =>
+const mainKeyboard = () =>
   Markup.keyboard([
-    [
-      '💰 Buy USDT',
-      '💸 Sell USDT'
-    ],
-    [
-      '📈 Rates',
-      '💳 Payment Methods'
-    ],
-    [
-      '📦 My Orders',
-      '🆘 Support'
-    ]
+    ['💰 Buy USDT', '💸 Sell USDT'],
+    ['📈 Rates', '💳 Payment Methods'],
+    ['📦 My Orders', '🆘 Support']
   ]).resize();
 
-const adminKb = () =>
+const adminKeyboard = () =>
   Markup.inlineKeyboard([
     [
-      Markup.button.callback(
-        '📊 Rates',
-        'AR'
-      ),
-      Markup.button.callback(
-        '💳 Payment',
-        'AP'
-      )
+      Markup.button.callback('📊 Rates', 'AR'),
+      Markup.button.callback('💳 Payment', 'AP')
     ],
     [
-      Markup.button.callback(
-        '👛 Wallets',
-        'AW'
-      ),
-      Markup.button.callback(
-        '📦 Orders',
-        'AO'
-      )
+      Markup.button.callback('👛 Wallets', 'AW'),
+      Markup.button.callback('📦 Orders', 'AO')
     ],
     [
-      Markup.button.callback(
-        '📢 Broadcast',
-        'AB'
-      ),
-      Markup.button.callback(
-        '📈 Stats',
-        'AS'
-      )
+      Markup.button.callback('📢 Broadcast', 'AB'),
+      Markup.button.callback('📈 Stats', 'AS')
     ]
   ]);
 
-const nets = p =>
+const networkKeyboard = prefix =>
   Markup.inlineKeyboard([
     [
       Markup.button.callback(
         'ERC20 / Ethereum',
-        `${p}_ERC20`
+        `${prefix}_ERC20`
       )
     ],
     [
       Markup.button.callback(
         'BEP20 / BSC',
-        `${p}_BEP20`
+        `${prefix}_BEP20`
       )
     ],
     [
       Markup.button.callback(
         'TRC20 / Tron',
-        `${p}_TRC20`
+        `${prefix}_TRC20`
       )
     ]
   ]);
 
-const payments = () =>
+const paymentKeyboard = () =>
   Markup.inlineKeyboard([
     [
       Markup.button.callback(
@@ -200,158 +138,153 @@ const payments = () =>
     ]
   ]);
 
-/* ================= TEXT ================= */
+const adminOnly = handler => async ctx => {
+  if (!isAdmin(ctx)) {
+    return send(ctx, '⛔ Admin only.');
+  }
 
-function rates() {
+  return handler(ctx);
+};
 
-  const s =
-    db.allSettings();
-
-  return `📈 INVARO EXCHANGE RATES
-
-🟢 Buy: ₹${money(s.buy_rate)} / USDT
-🔴 Sell: ₹${money(s.sell_rate)} / USDT
-
-Minimum Trade: ${MIN_USDT} USDT
-Maximum Buy: ₹${money(s.max_inr)}`;
-}
-
-function paymentsText() {
-
-  const s =
-    db.allSettings();
-
-  return `💳 PAYMENT METHODS
-
-UPI: ${s.upi_id || '-'}
-
-🏦 Bank 1
-Name: ${s.bank_1_name || '-'}
-Account: ${s.bank_1_account || '-'}
-IFSC: ${s.bank_1_ifsc || '-'}
-
-🏦 Bank 2
-Name: ${s.bank_2_name || '-'}
-Account: ${s.bank_2_account || '-'}
-IFSC: ${s.bank_2_ifsc || '-'}`;
-}
-
-function wallets() {
-
-  const s =
-    db.allSettings();
-
-  return `👛 USDT WALLETS
-
-ERC20 / Ethereum:
-${s.erc20_address || '-'}
-
-BEP20 / BSC:
-${s.bep20_address || '-'}
-
-TRC20 / Tron:
-${s.trc20_address || '-'}`;
-}
-
-function orderText(o) {
-
-  return `📦 ORDER #${o.id}
-
-Type: ${o.type}
-INR: ₹${money(o.amount_inr)}
-USDT: ${n(o.amount_usdt).toFixed(6)}
-Rate: ₹${money(o.rate)}
-Network: ${net(o.network)}
-Payment: ${pay(o.payment_method)}
-Status: ${o.status}
-Payout/Wallet: ${o.user_wallet || '-'}
-TXID: ${o.tx_hash || '-'}
-Created: ${o.created_at || '-'}`;
-}
-
-/* ================= ADMIN NOTIFY ================= */
-
-async function notify(
-  text,
-  extra = {}
-) {
-
+async function notifyAdmin(text, extra = {}) {
   try {
-
     return await bot.telegram.sendMessage(
       ADMIN_ID,
       text,
       extra
     );
-
-  } catch (e) {
-
+  } catch (err) {
     console.error(
-      'admin notify',
-      e.message
+      'Admin notification error:',
+      err.message
     );
-
   }
 }
 
-function adminOnly(fn) {
+/* ================= DISPLAY ================= */
 
-  return async ctx => {
+function ratesText() {
+  const s = db.allSettings();
 
-    if (!admin(ctx)) {
+  const buy = num(s.buy_rate);
+  const sell = num(s.sell_rate);
 
-      return reply(
-        ctx,
-        '⛔ Admin only.'
-      );
+  const minInrByRate =
+    buy > 0
+      ? MIN_USDT * buy
+      : 0;
 
-    }
+  return [
+    '📈 INVARO EXCHANGE RATES',
+    '',
+    `🟢 Buy: ₹${money(buy)} / USDT`,
+    `🔴 Sell: ₹${money(sell)} / USDT`,
+    '',
+    `Minimum trade: ${MIN_USDT} USDT`,
+    buy > 0
+      ? `Minimum Buy: ₹${money(minInrByRate)}`
+      : 'Minimum Buy: ₹— until Buy rate is set',
+    `Maximum: ₹${money(s.max_inr)}`
+  ].join('\n');
+}
 
-    return fn(ctx);
-  };
+function paymentText() {
+  const s = db.allSettings();
+
+  return [
+    '💳 PAYMENT METHODS',
+    '',
+    `UPI: ${s.upi_id || '-'}`,
+    '',
+    '🏦 Bank 1',
+    `Name: ${s.bank_1_name || '-'}`,
+    `Account: ${s.bank_1_account || '-'}`,
+    `IFSC: ${s.bank_1_ifsc || '-'}`,
+    '',
+    '🏦 Bank 2',
+    `Name: ${s.bank_2_name || '-'}`,
+    `Account: ${s.bank_2_account || '-'}`,
+    `IFSC: ${s.bank_2_ifsc || '-'}`
+  ].join('\n');
+}
+
+function walletText() {
+  const s = db.allSettings();
+
+  return [
+    '👛 USDT WALLETS',
+    '',
+    'ERC20 / Ethereum:',
+    s.erc20_address || '-',
+    '',
+    'BEP20 / BSC:',
+    s.bep20_address || '-',
+    '',
+    'TRC20 / Tron:',
+    s.trc20_address || '-'
+  ].join('\n');
+}
+
+function orderText(order) {
+  return [
+    `📦 ORDER #${order.id}`,
+    '',
+    `Type: ${order.type}`,
+    `INR: ₹${money(order.amount_inr)}`,
+    `USDT: ${num(order.amount_usdt).toFixed(6)}`,
+    `Rate: ₹${money(order.rate)}`,
+    `Network: ${networkName(order.network)}`,
+    `Payment: ${paymentName(order.payment_method)}`,
+    `Status: ${order.status}`,
+    `Wallet/Payout: ${order.user_wallet || '-'}`,
+    `TXID: ${order.tx_hash || '-'}`,
+    `Created: ${order.created_at || '-'}`
+  ].join('\n');
 }
 
 /* ================= START ================= */
 
 bot.start(ctx => {
-
-  db.upsertUser(
-    ctx.from
-  );
+  db.upsertUser(ctx.from);
 
   ctx.session = {};
 
-  return reply(
+  return send(
     ctx,
-    '👋 Welcome to INVARO EXCHANGE\n\nBuy and sell USDT through our manual settlement system.',
-    mainKb()
+    [
+      '👋 Welcome to INVARO EXCHANGE',
+      '',
+      'Buy and sell USDT through our manual settlement system.',
+      '',
+      `Minimum trade: ${MIN_USDT} USDT`
+    ].join('\n'),
+    mainKeyboard()
   );
-
 });
 
 bot.command(
   'menu',
   ctx =>
-    reply(
+    send(
       ctx,
       'Main menu:',
-      mainKb()
+      mainKeyboard()
     )
 );
 
 bot.command(
   'rate',
   ctx =>
-    reply(
+    send(
       ctx,
-      rates()
+      ratesText()
     )
 );
 
 bot.command(
   'help',
   ctx =>
-    reply(
+    send(
       ctx,
       'Use /menu to open the menu.\nFor support press 🆘 Support.'
     )
@@ -360,30 +293,30 @@ bot.command(
 bot.command(
   'orders',
   ctx => {
+    db.upsertUser(ctx.from);
 
-    const a =
+    const orders =
       db.userOrders(
         ctx.from.id,
         10
       );
 
-    return reply(
+    return send(
       ctx,
-      a.length
-        ? a.map(orderText).join('\n\n')
+      orders.length
+        ? orders.map(orderText).join('\n\n')
         : '📦 No orders yet.'
     );
-
   }
 );
 
 bot.command(
   'admin',
   adminOnly(ctx =>
-    reply(
+    send(
       ctx,
       '🛠 INVARO EXCHANGE ADMIN PANEL',
-      adminKb()
+      adminKeyboard()
     )
   )
 );
@@ -393,69 +326,62 @@ bot.command(
 bot.hears(
   '📈 Rates',
   ctx =>
-    reply(
+    send(
       ctx,
-      rates()
+      ratesText()
     )
 );
 
 bot.hears(
   '💳 Payment Methods',
   async ctx => {
-
-    await reply(
+    await send(
       ctx,
-      paymentsText()
+      paymentText()
     );
 
-    const q =
+    const qr =
       db.get('upi_qr');
 
-    if (q) {
-
-      await ctx
-        .replyWithPhoto(
-          q,
-          {
-            caption: 'UPI QR'
-          }
-        )
-        .catch(() => {});
-
+    if (qr) {
+      await ctx.replyWithPhoto(
+        qr,
+        {
+          caption: 'UPI QR'
+        }
+      ).catch(() => {});
     }
-
   }
 );
 
 bot.hears(
   '📦 My Orders',
   ctx => {
+    db.upsertUser(ctx.from);
 
-    const a =
+    const orders =
       db.userOrders(
         ctx.from.id,
         10
       );
 
-    return reply(
+    return send(
       ctx,
-      a.length
-        ? a.map(orderText).join('\n\n')
+      orders.length
+        ? orders.map(orderText).join('\n\n')
         : '📦 No orders yet.'
     );
-
   }
 );
 
 bot.hears(
   '🆘 Support',
   ctx =>
-    reply(
+    send(
       ctx,
       `🆘 Support\n\n${
-        db.get(
-          'support_username'
-        ) || '@InvaroExchange'
+        db.get('support_username')
+        || '@InvaroExchange'
       }`
     )
 );
@@ -465,38 +391,38 @@ bot.hears(
 bot.hears(
   '💰 Buy USDT',
   ctx => {
-
     const rate =
-      n(db.get('buy_rate'));
+      num(db.get('buy_rate'));
 
     if (rate <= 0) {
-
-      return reply(
+      return send(
         ctx,
         '⚠️ Buy rate is not set yet.'
       );
-
     }
+
+    const minInr =
+      MIN_USDT * rate;
+
+    const maxInr =
+      num(db.get('max_inr'));
 
     ctx.session = {
       flow: 'BUY_INR'
     };
 
-    const minInr =
-      MIN_USDT * rate;
-
-    return reply(
+    return send(
       ctx,
-      `💰 BUY USDT
-
-Rate: ₹${money(rate)} / USDT
-
-Minimum trade: ${MIN_USDT} USDT
-Minimum INR: ₹${money(minInr)}
-
-Enter INR amount:`
+      [
+        '💰 BUY USDT',
+        '',
+        `Rate: ₹${money(rate)} / USDT`,
+        `Minimum: ₹${money(minInr)} (${MIN_USDT} USDT)`,
+        `Maximum: ₹${money(maxInr)}`,
+        '',
+        'Enter INR amount:'
+      ].join('\n')
     );
-
   }
 );
 
@@ -505,86 +431,89 @@ Enter INR amount:`
 bot.hears(
   '💸 Sell USDT',
   ctx => {
-
     const rate =
-      n(db.get('sell_rate'));
+      num(db.get('sell_rate'));
 
     if (rate <= 0) {
-
-      return reply(
+      return send(
         ctx,
         '⚠️ Sell rate is not set yet.'
       );
-
     }
 
     ctx.session = {
       flow: 'SELL_USDT'
     };
 
-    return reply(
+    return send(
       ctx,
-      `💸 SELL USDT
-
-Rate: ₹${money(rate)} / USDT
-
-Minimum trade: ${MIN_USDT} USDT
-
-Enter USDT amount:`
+      [
+        '💸 SELL USDT',
+        '',
+        `Rate: ₹${money(rate)} / USDT`,
+        `Minimum: ${MIN_USDT} USDT`,
+        '',
+        'Enter USDT amount:'
+      ].join('\n')
     );
-
   }
 );
 
 /* ================= NETWORK BUTTONS ================= */
 
 for (
-  const p of [
-    'BUY',
-    'SELL'
-  ]
+  const prefix of ['BUY', 'SELL']
 ) {
-
   for (
-    const x of [
+    const network of [
       'ERC20',
       'BEP20',
       'TRC20'
     ]
   ) {
-
     bot.action(
-      `${p}_${x}`,
+      `${prefix}_${network}`,
       async ctx => {
 
-        await ctx.answerCbQuery();
+        await ctx
+          .answerCbQuery()
+          .catch(() => {});
 
         if (
-          !ctx.session?.flow?.startsWith(
-            p
-          )
+          prefix === 'BUY' &&
+          ctx.session?.flow !==
+            'BUY_NETWORK'
         ) {
-
-          return reply(
+          return send(
             ctx,
-            'Session expired. Press the button again.'
+            'Session expired. Press Buy USDT again.'
           );
-
         }
 
-        ctx.session.network = x;
+        if (
+          prefix === 'SELL' &&
+          ctx.session?.flow !==
+            'SELL_NETWORK'
+        ) {
+          return send(
+            ctx,
+            'Session expired. Press Sell USDT again.'
+          );
+        }
 
-        if (p === 'BUY') {
+        ctx.session.network =
+          network;
+
+        if (prefix === 'BUY') {
 
           ctx.session.flow =
             'BUY_PAYMENT';
 
-          return reply(
+          return send(
             ctx,
-            `Network: ${net(x)}\n\nChoose payment method:`,
-            payments()
+            `Network: ${networkName(network)}\n\nChoose payment method:`,
+            paymentKeyboard()
           );
-
         }
 
         ctx.session.flow =
@@ -592,65 +521,61 @@ for (
 
         const address =
           db.get(
-            `${x.toLowerCase()}_address`
+            `${network.toLowerCase()}_address`
           );
 
-        await reply(
+        await send(
           ctx,
-          `Network: ${net(x)}
-
-Send USDT to:
-
-${address}
-
-After sending, send the TXID here.`
+          [
+            `Network: ${networkName(network)}`,
+            '',
+            'Send USDT to this address:',
+            '',
+            address || '-',
+            '',
+            'After sending, send the TXID here.'
+          ].join('\n')
         );
 
-        const q =
+        const qr =
           db.get(
-            `${x.toLowerCase()}_qr`
+            `${network.toLowerCase()}_qr`
           );
 
-        if (q) {
-
+        if (qr) {
           await ctx
             .replyWithPhoto(
-              q,
+              qr,
               {
                 caption:
-                  `${net(x)} USDT QR`
+                  `${networkName(network)} USDT QR`
               }
             )
             .catch(() => {});
-
         }
-
       }
     );
-
   }
-
 }
 
 /* ================= BUY PAYMENT ================= */
 
-async function buyPayment(
+async function chooseBuyPayment(
   ctx,
   method
 ) {
-
-  await ctx.answerCbQuery();
+  await ctx
+    .answerCbQuery()
+    .catch(() => {});
 
   if (
     ctx.session?.flow !==
     'BUY_PAYMENT'
   ) {
-
-    return reply(
+    return send(
       ctx,
       'Session expired. Press Buy USDT again.'
     );
-
   }
 
   ctx.session.payment_method =
@@ -664,17 +589,18 @@ async function buyPayment(
 
   if (method === 'UPI') {
 
-    await reply(
+    await send(
       ctx,
-      `💳 UPI
-
-UPI ID: ${s.upi_id || '-'}
-
-Make payment and send screenshot here.`
+      [
+        '💳 UPI PAYMENT',
+        '',
+        `UPI ID: ${s.upi_id || '-'}`,
+        '',
+        'Make the payment and send the payment screenshot here.'
+      ].join('\n')
     );
 
     if (s.upi_qr) {
-
       await ctx
         .replyWithPhoto(
           s.upi_qr,
@@ -683,26 +609,25 @@ Make payment and send screenshot here.`
           }
         )
         .catch(() => {});
-
     }
 
   } else {
 
-    await reply(
+    await send(
       ctx,
-      `${paymentsText()}
-
-Make payment and send screenshot here.`
+      [
+        paymentText(),
+        '',
+        'Make the payment and send the payment screenshot here.'
+      ].join('\n')
     );
-
   }
-
 }
 
 bot.action(
   'BP_UPI',
   ctx =>
-    buyPayment(
+    chooseBuyPayment(
       ctx,
       'UPI'
     )
@@ -711,7 +636,7 @@ bot.action(
 bot.action(
   'BP_IMPS',
   ctx =>
-    buyPayment(
+    chooseBuyPayment(
       ctx,
       'IMPS'
     )
@@ -721,40 +646,44 @@ bot.action(
 
 bot.on(
   'photo',
-  async (
-    ctx,
-    next
-  ) => {
+  async (ctx, next) => {
 
-    const id =
-      ctx.message.photo?.at(-1)?.file_id;
+    const photo =
+      ctx.message.photo;
 
-    if (!id) {
+    const fileId =
+      photo?.[
+        photo.length - 1
+      ]?.file_id;
+
+    if (!fileId) {
       return next();
     }
 
+    /* ADMIN QR */
+
     if (
-      admin(ctx) &&
+      isAdmin(ctx) &&
       ctx.session?.qrKey
     ) {
-
       const key =
         ctx.session.qrKey;
 
       db.setSetting(
         key,
-        id
+        fileId
       );
 
       ctx.session.qrKey =
         null;
 
-      return reply(
+      return send(
         ctx,
-        `✅ ${key} updated.`
+        `✅ ${key} updated successfully.`
       );
-
     }
+
+    /* BUY PAYMENT PROOF */
 
     if (
       ctx.session?.flow ===
@@ -762,20 +691,18 @@ bot.on(
     ) {
 
       ctx.session.proof =
-        id;
+        fileId;
 
       ctx.session.flow =
         'BUY_WALLET';
 
-      return reply(
+      return send(
         ctx,
         '✅ Payment screenshot received.\n\nNow send your USDT receiving wallet address.'
       );
-
     }
 
     return next();
-
   }
 );
 
@@ -783,115 +710,93 @@ bot.on(
 
 bot.on(
   'text',
-  async (
-    ctx,
-    next
-  ) => {
+  async (ctx, next) => {
 
-    const t =
-      ctx.message.text?.trim();
+    const text =
+      ctx.message?.text?.trim();
+
+    /*
+      IMPORTANT:
+      Commands must go to command handlers.
+    */
 
     if (
-      !t ||
-      t.startsWith('/')
+      !text ||
+      text.startsWith('/')
     ) {
-
       return next();
-
     }
 
-    db.upsertUser(
-      ctx.from
-    );
+    db.upsertUser(ctx.from);
 
     /* ADMIN BUY RATE */
 
     if (
-      admin(ctx) &&
+      isAdmin(ctx) &&
       ctx.session?.adminAction ===
         'BUY'
     ) {
 
-      const match =
-        t.match(
-          /(\d+(?:\.\d+)?)/
-        );
+      const rate =
+        num(text);
 
-      const r =
-        match
-          ? Number(match[1])
-          : 0;
-
-      if (r <= 0) {
-
-        return reply(
+      if (rate <= 0) {
+        return send(
           ctx,
-          '❌ Invalid rate.\n\nExample:\n102\nBuy rate 102'
+          '❌ Enter a valid BUY rate, e.g. 102'
         );
-
       }
 
       db.setSetting(
         'buy_rate',
-        r
+        rate
       );
 
       ctx.session.adminAction =
         null;
 
-      return reply(
+      return send(
         ctx,
-        `✅ Buy rate updated: ₹${money(r)} / USDT`
+        `✅ BUY rate updated: ₹${money(rate)} / USDT`
       );
-
     }
 
     /* ADMIN SELL RATE */
 
     if (
-      admin(ctx) &&
+      isAdmin(ctx) &&
       ctx.session?.adminAction ===
         'SELL'
     ) {
 
-      const match =
-        t.match(
-          /(\d+(?:\.\d+)?)/
-        );
+      const rate =
+        num(text);
 
-      const r =
-        match
-          ? Number(match[1])
-          : 0;
-
-      if (r <= 0) {
-
-        return reply(
+      if (rate <= 0) {
+        return send(
           ctx,
-          '❌ Invalid rate.\n\nExample:\n98\nSell rate 98'
+          '❌ Enter a valid SELL rate, e.g. 100'
         );
-
       }
 
       db.setSetting(
         'sell_rate',
-        r
+        rate
       );
 
       ctx.session.adminAction =
         null;
 
-      return reply(
+      return send(
         ctx,
-        `✅ Sell rate updated: ₹${money(r)} / USDT`
+        `✅ SELL rate updated: ₹${money(rate)} / USDT`
       );
-
     }
 
     /* BROADCAST */
 
     if (
-      admin(ctx) &&
+      isAdmin(ctx) &&
       ctx.session?.adminAction ===
         'BROADCAST'
     ) {
@@ -899,30 +804,28 @@ bot.on(
       ctx.session.adminAction =
         null;
 
-      let count = 0;
+      let sent = 0;
 
       for (
-        const id of db.userIds()
+        const userId of
+        db.userIds()
       ) {
 
         try {
-
           await bot.telegram.sendMessage(
-            id,
-            `📢 INVARO EXCHANGE\n\n${t}`
+            userId,
+            `📢 INVARO EXCHANGE\n\n${text}`
           );
 
-          count++;
+          sent++;
 
         } catch (_) {}
-
       }
 
-      return reply(
+      return send(
         ctx,
-        `✅ Broadcast sent to ${count} users.`
+        `✅ Broadcast sent to ${sent} users.`
       );
-
     }
 
     /* BUY INR */
@@ -932,76 +835,61 @@ bot.on(
       'BUY_INR'
     ) {
 
-      const amount =
-        n(t);
-
-      const max =
-        n(db.get('max_inr'));
+      const amountInr =
+        num(text);
 
       const rate =
-        n(db.get('buy_rate'));
+        num(db.get('buy_rate'));
 
-      if (amount <= 0) {
+      const maxInr =
+        num(db.get('max_inr'));
 
-        return reply(
-          ctx,
-          '❌ Enter valid INR amount.'
-        );
-
-      }
+      const minInr =
+        MIN_USDT * rate;
 
       if (rate <= 0) {
 
         ctx.session = {};
 
-        return reply(
+        return send(
           ctx,
-          '⚠️ Buy rate is currently unavailable.'
+          '⚠️ Buy rate is not set. Please try again later.'
         );
-
       }
 
-      const usdt =
-        amount / rate;
-
-      /* 20 USDT MINIMUM */
-
-      if (
-        usdt < MIN_USDT
-      ) {
-
-        const minimumInr =
-          MIN_USDT * rate;
-
-        return reply(
+      if (amountInr <= 0) {
+        return send(
           ctx,
-          `❌ Minimum trade is ${MIN_USDT} USDT.
-
-Current rate: ₹${money(rate)} / USDT
-Minimum INR required: ₹${money(minimumInr)}
-
-Please enter ₹${money(minimumInr)} or more.`
+          '❌ Enter a valid INR amount.'
         );
-
       }
 
       if (
-        max > 0 &&
-        amount > max
+        amountInr < minInr
       ) {
-
-        return reply(
+        return send(
           ctx,
-          `❌ Maximum buy amount: ₹${money(max)}`
+          `❌ Minimum BUY is ${MIN_USDT} USDT = ₹${money(minInr)} at the current rate.`
         );
-
       }
+
+      if (
+        amountInr > maxInr
+      ) {
+        return send(
+          ctx,
+          `❌ Maximum order: ₹${money(maxInr)}`
+        );
+      }
+
+      const amountUsdt =
+        amountInr / rate;
 
       ctx.session.amount_inr =
-        amount;
+        amountInr;
 
       ctx.session.amount_usdt =
-        usdt;
+        amountUsdt;
 
       ctx.session.rate =
         rate;
@@ -1009,14 +897,15 @@ Please enter ₹${money(minimumInr)} or more.`
       ctx.session.flow =
         'BUY_NETWORK';
 
-      return reply(
+      return send(
         ctx,
-        `✅ You will receive approximately ${usdt.toFixed(6)} USDT.
-
-Select network:`,
-        nets('BUY')
+        [
+          `You will receive approximately ${amountUsdt.toFixed(6)} USDT.`,
+          '',
+          'Select network:'
+        ].join('\n'),
+        networkKeyboard('BUY')
       );
-
     }
 
     /* BUY WALLET */
@@ -1026,20 +915,15 @@ Select network:`,
       'BUY_WALLET'
     ) {
 
-      if (
-        t.length < 10
-      ) {
-
-        return reply(
+      if (text.length < 10) {
+        return send(
           ctx,
           '❌ Enter a valid wallet address.'
         );
-
       }
 
-      const id =
+      const orderId =
         db.createOrder({
-
           telegram_id:
             ctx.from.id,
 
@@ -1065,50 +949,55 @@ Select network:`,
             ctx.session.proof,
 
           user_wallet:
-            t
-
+            text
         });
 
-      const o =
-        db.getOrder(id);
+      const order =
+        db.getOrder(orderId);
 
-      await reply(
+      await send(
         ctx,
-        `✅ BUY ORDER #${id} CREATED
-
-INR: ₹${money(o.amount_inr)}
-USDT: ${n(o.amount_usdt).toFixed(6)}
-Network: ${net(o.network)}
-
-Admin will verify your payment.`
+        [
+          `✅ BUY ORDER #${orderId} CREATED`,
+          '',
+          `INR: ₹${money(order.amount_inr)}`,
+          `USDT: ${num(order.amount_usdt).toFixed(6)}`,
+          `Network: ${networkName(order.network)}`,
+          '',
+          'Admin will verify your payment.'
+        ].join('\n')
       );
 
-      await notify(
-        `🆕 BUY ORDER #${id}
-
-User ID: ${ctx.from.id}
-INR: ₹${money(o.amount_inr)}
-USDT: ${n(o.amount_usdt).toFixed(6)}
-Network: ${net(o.network)}
-Payment: ${pay(o.payment_method)}
-Wallet: ${o.user_wallet}`,
+      await notifyAdmin(
+        [
+          `🆕 BUY ORDER #${orderId}`,
+          '',
+          `User ID: ${ctx.from.id}`,
+          `Username: @${ctx.from.username || '-'}`,
+          `INR: ₹${money(order.amount_inr)}`,
+          `USDT: ${num(order.amount_usdt).toFixed(6)}`,
+          `Rate: ₹${money(order.rate)}`,
+          `Network: ${networkName(order.network)}`,
+          `Payment: ${paymentName(order.payment_method)}`,
+          `Wallet: ${order.user_wallet}`
+        ].join('\n'),
         {
           reply_markup:
             Markup.inlineKeyboard([
               [
                 Markup.button.callback(
                   '📄 View',
-                  `OV_${id}`
+                  `OV_${orderId}`
                 ),
                 Markup.button.callback(
                   '✅ Approve',
-                  `OA_${id}`
+                  `OA_${orderId}`
                 )
               ],
               [
                 Markup.button.callback(
                   '❌ Reject',
-                  `OR_${id}`
+                  `OR_${orderId}`
                 )
               ]
             ]).reply_markup
@@ -1118,7 +1007,6 @@ Wallet: ${o.user_wallet}`,
       ctx.session = {};
 
       return;
-
     }
 
     /* SELL USDT */
@@ -1128,56 +1016,39 @@ Wallet: ${o.user_wallet}`,
       'SELL_USDT'
     ) {
 
-      const amount =
-        n(t);
+      const amountUsdt =
+        num(text);
 
       const rate =
-        n(db.get('sell_rate'));
+        num(db.get('sell_rate'));
 
-      if (
-        amount <= 0
-      ) {
-
-        return reply(
-          ctx,
-          '❌ Enter valid USDT amount.'
-        );
-
-      }
-
-      if (
-        rate <= 0
-      ) {
+      if (rate <= 0) {
 
         ctx.session = {};
 
-        return reply(
+        return send(
           ctx,
-          '⚠️ Sell rate is currently unavailable.'
+          '⚠️ Sell rate is not set. Please try again later.'
         );
-
       }
-
-      /* 20 USDT MINIMUM */
 
       if (
-        amount < MIN_USDT
+        amountUsdt < MIN_USDT
       ) {
-
-        return reply(
+        return send(
           ctx,
-          `❌ Minimum trade is ${MIN_USDT} USDT.
-
-Please enter ${MIN_USDT} USDT or more.`
+          `❌ Minimum SELL is ${MIN_USDT} USDT.`
         );
-
       }
 
+      const amountInr =
+        amountUsdt * rate;
+
       ctx.session.amount_usdt =
-        amount;
+        amountUsdt;
 
       ctx.session.amount_inr =
-        amount * rate;
+        amountInr;
 
       ctx.session.rate =
         rate;
@@ -1185,14 +1056,17 @@ Please enter ${MIN_USDT} USDT or more.`
       ctx.session.flow =
         'SELL_NETWORK';
 
-      return reply(
+      return send(
         ctx,
-        `Estimated payout: ₹${money(ctx.session.amount_inr)}
-
-Select network:`,
-        nets('SELL')
+        [
+          `Estimated payout: ₹${money(amountInr)}`,
+          '',
+          `Minimum: ${MIN_USDT} USDT`,
+          '',
+          'Select network:'
+        ].join('\n'),
+        networkKeyboard('SELL')
       );
-
     }
 
     /* SELL TXID */
@@ -1202,28 +1076,30 @@ Select network:`,
       'SELL_TXID'
     ) {
 
-      if (
-        t.length < 8
-      ) {
-
-        return reply(
+      if (text.length < 8) {
+        return send(
           ctx,
           '❌ Enter a valid TXID.'
         );
-
       }
 
       ctx.session.tx_hash =
-        t;
+        text;
 
       ctx.session.flow =
         'SELL_PAYOUT';
 
-      return reply(
+      return send(
         ctx,
-        'Send payout details:\n\nName | UPI ID OR Bank Account | IFSC'
+        [
+          '🏦 SEND PAYOUT DETAILS',
+          '',
+          'Name | UPI ID OR Bank Account | IFSC',
+          '',
+          'Example:',
+          'Rakesh Kumar | name@upi | -'
+        ].join('\n')
       );
-
     }
 
     /* SELL PAYOUT */
@@ -1233,9 +1109,8 @@ Select network:`,
       'SELL_PAYOUT'
     ) {
 
-      const id =
+      const orderId =
         db.createOrder({
-
           telegram_id:
             ctx.from.id,
 
@@ -1258,127 +1133,13 @@ Select network:`,
             ctx.session.tx_hash,
 
           user_wallet:
-            t
-
+            text
         });
 
-      const o =
-        db.getOrder(id);
+      const order =
+        db.getOrder(orderId);
 
-      await reply(
+      await send(
         ctx,
-        `✅ SELL ORDER #${id} CREATED
-
-USDT: ${n(o.amount_usdt).toFixed(6)}
-Payout: ₹${money(o.amount_inr)}
-Network: ${net(o.network)}`
-      );
-
-      await notify(
-        `🆕 SELL ORDER #${id}
-
-User ID: ${ctx.from.id}
-USDT: ${n(o.amount_usdt).toFixed(6)}
-Payout: ₹${money(o.amount_inr)}
-Network: ${net(o.network)}
-TXID: ${o.tx_hash}
-Payout: ${o.user_wallet}`,
-        {
-          reply_markup:
-            Markup.inlineKeyboard([
-              [
-                Markup.button.callback(
-                  '📄 View',
-                  `OV_${id}`
-                ),
-                Markup.button.callback(
-                  '✅ Approve',
-                  `OA_${id}`
-                )
-              ],
-              [
-                Markup.button.callback(
-                  '❌ Reject',
-                  `OR_${id}`
-                )
-              ]
-            ]).reply_markup
-        }
-      );
-
-      ctx.session = {};
-
-      return;
-
-    }
-
-    return next();
-
-  }
-);
-
-/* ================= ADMIN PANEL ================= */
-
-bot.action(
-  'AR',
-  adminOnly(
-    async ctx => {
-
-      await ctx.answerCbQuery();
-
-      return reply(
-        ctx,
-        `${rates()}\n\nChoose:`,
-        Markup.inlineKeyboard([
-          [
-            Markup.button.callback(
-              '🟢 Set Buy',
-              'SB'
-            )
-          ],
-          [
-            Markup.button.callback(
-              '🔴 Set Sell',
-              'SS'
-            )
-          ],
-          [
-            Markup.button.callback(
-              '↩️ Admin',
-              'AH'
-            )
-          ]
-        ])
-      );
-
-    }
-  )
-);
-
-bot.action(
-  'SB',
-  adminOnly(
-    async ctx => {
-
-      await ctx.answerCbQuery();
-
-      ctx.session.adminAction =
-        'BUY';
-
-      return reply(
-        ctx,
-        'Send new BUY rate.\n\nExample: 102\nor\nBuy rate 102'
-      );
-
-    }
-  )
-);
-
-bot.action(
-  'SS',
-  adminOnly(
-    async ctx => {
-
-      await ctx.answerCbQuery();
-
-          
+        [
+          `✅ SELL ORDER #${order
