@@ -1,11 +1,10 @@
 {
   "name": "invaro-exchange-bot",
   "version": "1.0.0",
-  "description": "INVARO EXCHANGE Telegram USDT/INR bot with admin-controlled rates, payment details and manual order approval.",
+  "description": "INVARO EXCHANGE Telegram USDT INR bot",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "node --watch index.js"
+    "start": "node index.js"
   },
   "engines": {
     "node": "22.x"
