@@ -1,0 +1,14 @@
+{
+  "name": "invaro-exchange-bot",
+  "version": "1.0.0",
+  "description": "INVARO EXCHANGE Telegram USDT/INR bot",
+  "main": "index.js",
+  "scripts": { "start": "node index.js", "check": "node --check index.js" },
+  "engines": { "node": "22.x" },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "dotenv": "^16.6.1",
+    "express": "^5.1.0",
+    "telegraf": "^4.16.3"
+  }
+}
